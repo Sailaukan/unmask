@@ -2,8 +2,8 @@
 
 `unmask` is a local HTTP server that exposes Ollama and OpenAI-compatible APIs
 for diffusion language models. It does not use LM Studio and does not proxy to
-any external API. Requests are translated into local `llama-diffusion-cli`
-subprocess calls against Dream or LLaDA `.gguf` files.
+any external API. Requests are translated into local diffusion inference against
+Dream or LLaDA `.gguf` files.
 
 ```text
 Continue / Open WebUI / OpenAI-compatible tool
@@ -12,20 +12,36 @@ Continue / Open WebUI / OpenAI-compatible tool
 unmask FastAPI server on port 11434
           |
           v
-llama-diffusion-cli subprocess
+persistent llama-diffusion-server worker
           |
           v
 Dream / LLaDA .gguf model file
 ```
 
+The persistent worker is preferred because it loads the GGUF once and keeps it
+in memory. If the worker binary is missing or already running with a different
+model, `unmask` can fall back to `llama-diffusion-cli`.
+
 ## Prerequisites
 
 - Python 3.10+
 - `llama.cpp` built with Metal support on macOS
-- `llama-diffusion-cli` available at:
+- `llama-diffusion-server` and `llama-diffusion-cli` available at:
 
 ```text
+~/llama.cpp/build/bin/llama-diffusion-server
 ~/llama.cpp/build/bin/llama-diffusion-cli
+```
+
+Apply the included `llama.cpp` patch and build the persistent worker after
+pulling this project:
+
+```bash
+UNMASK_DIR=~/Documents/projects/ML/unmask
+cd ~/llama.cpp
+git apply "$UNMASK_DIR/patches/llama-diffusion-server.patch"
+cmake -S . -B build
+cmake --build build --target llama-diffusion-server -j
 ```
 
 - Model files downloaded under:
@@ -83,6 +99,24 @@ If native Ollama is already using port `11434`, stop Ollama first or run
 python server.py --model dream:7b --port 11435
 ```
 
+On startup, `unmask` automatically starts:
+
+```text
+~/llama.cpp/build/bin/llama-diffusion-server
+```
+
+The worker listens locally on:
+
+```text
+http://127.0.0.1:8088
+```
+
+Health check:
+
+```bash
+curl http://localhost:8088/health
+```
+
 ## API
 
 Ollama-compatible:
@@ -97,7 +131,7 @@ OpenAI-compatible:
 - `POST /v1/chat/completions`
 
 Streaming is intentionally not implemented yet. The server buffers the full
-`llama-diffusion-cli` output and returns one complete response.
+worker output and returns one complete response.
 
 By default, `unmask` returns raw model output. If a diffusion model produces a
 degenerate tail such as repeated `2 2 2` or repeated role labels, opt into
@@ -167,6 +201,22 @@ curl http://localhost:11434/v1/chat/completions \
   }'
 ```
 
+Direct worker check:
+
+```bash
+MODEL_PATH="$HOME/unmask/models/Dream-Coder-v0-Base-7B.i1-Q4_K_S.gguf"
+curl http://localhost:8088/generate \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model_path\": \"$MODEL_PATH\",
+    \"prompt\": \"write hello\",
+    \"n_tokens\": 16,
+    \"steps\": 8,
+    \"temperature\": 0.2,
+    \"model_flags\": [\"--diffusion-eps\", \"0.001\", \"--diffusion-algorithm\", \"3\"]
+  }"
+```
+
 ## Continue.dev
 
 Point Continue at the OpenAI-compatible server:
@@ -223,7 +273,9 @@ MODELS = {
 
 ## Errors
 
-- Missing `llama-diffusion-cli`: printed clearly on startup and returned as HTTP `500`.
+- Missing `llama-diffusion-server`: printed clearly on startup; `unmask` falls back to `llama-diffusion-cli` when enabled.
+- Missing `llama-diffusion-cli`: printed clearly on startup and returned as HTTP `500` if fallback is needed.
 - Missing model file: HTTP `404` with the expected full path.
 - CLI timeout: HTTP `504`.
 - CLI nonzero exit: HTTP `500` with recent stdout/stderr.
+- Worker request errors: HTTP `400` or `500` with the worker response body.

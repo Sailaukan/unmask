@@ -1,6 +1,7 @@
 """Configuration for the unmask local diffusion server."""
 
 CLI_PATH = "~/llama.cpp/build/bin/llama-diffusion-cli"
+DIFFUSION_SERVER_PATH = "~/llama.cpp/build/bin/llama-diffusion-server"
 MODELS_DIR = "~/unmask/models"
 
 DEFAULT_STEPS = 128
@@ -11,3 +12,12 @@ HOST = "0.0.0.0"
 PORT = 11434
 GPU_LAYERS = "99"
 CLI_TIMEOUT_SECONDS = 120
+
+USE_PERSISTENT_WORKER = True
+FALLBACK_TO_CLI = True
+DIFFUSION_WORKER_HOST = "127.0.0.1"
+DIFFUSION_WORKER_PORT = 8088
+DIFFUSION_WORKER_URL = f"http://{DIFFUSION_WORKER_HOST}:{DIFFUSION_WORKER_PORT}"
+WORKER_MAX_SEQUENCE_LENGTH = 1024
+WORKER_STARTUP_TIMEOUT_SECONDS = 180
+WORKER_REQUEST_TIMEOUT_SECONDS = 300

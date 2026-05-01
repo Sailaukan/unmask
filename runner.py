@@ -1,11 +1,14 @@
-"""Subprocess wrapper for llama-diffusion-cli."""
+"""Local diffusion runner wrappers for persistent worker and CLI fallback."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import subprocess
 from pathlib import Path
+
+import httpx
 
 from config import (
     CLI_PATH,
@@ -13,8 +16,13 @@ from config import (
     DEFAULT_STEPS,
     DEFAULT_TEMP,
     DEFAULT_TOKENS,
+    DIFFUSION_SERVER_PATH,
+    DIFFUSION_WORKER_URL,
+    FALLBACK_TO_CLI,
     GPU_LAYERS,
     MODELS_DIR,
+    USE_PERSISTENT_WORKER,
+    WORKER_REQUEST_TIMEOUT_SECONDS,
 )
 from registry import get_model_config, list_models
 
@@ -54,6 +62,26 @@ class CliProcessError(RunnerError):
         self.stdout = stdout
         self.stderr = stderr
         super().__init__(f"llama-diffusion-cli exited with code {returncode}")
+
+
+class WorkerNotFoundError(RunnerError):
+    def __init__(self, worker_path: Path) -> None:
+        self.worker_path = worker_path
+        super().__init__(f"llama-diffusion-server was not found or is not executable at {worker_path}")
+
+
+class WorkerUnavailableError(RunnerError):
+    def __init__(self, worker_url: str, detail: str) -> None:
+        self.worker_url = worker_url
+        self.detail = detail
+        super().__init__(f"llama-diffusion-server is unavailable at {worker_url}: {detail}")
+
+
+class WorkerProcessError(RunnerError):
+    def __init__(self, status_code: int, body: str) -> None:
+        self.status_code = status_code
+        self.body = body
+        super().__init__(f"llama-diffusion-server returned HTTP {status_code}")
 
 
 def extract_cli_output(stdout: str, stderr: str, *, clean_tail: bool = False) -> str:
@@ -150,6 +178,13 @@ def validate_cli_path(cli_path: str = CLI_PATH) -> Path:
     return resolved
 
 
+def validate_diffusion_server_path(worker_path: str = DIFFUSION_SERVER_PATH) -> Path:
+    resolved = expand_path(worker_path)
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise WorkerNotFoundError(resolved)
+    return resolved
+
+
 def resolve_model_path(model: str, models_dir: str = MODELS_DIR) -> Path:
     model_config = get_model_config(model)
     if model_config is None:
@@ -161,6 +196,11 @@ def resolve_model_path(model: str, models_dir: str = MODELS_DIR) -> Path:
         raise ModelFileNotFoundError(model, model_path)
 
     return model_path
+
+
+def estimated_diffusion_sequence_length(prompt: str, n_tokens: int) -> int:
+    estimated_prompt_tokens = max(16, min(512, len(prompt) // 4))
+    return max(64, n_tokens + estimated_prompt_tokens)
 
 
 def run_diffusion_cli(
@@ -194,6 +234,8 @@ def run_diffusion_cli(
         str(steps),
         "--temp",
         str(temperature),
+        "--ubatch-size",
+        str(estimated_diffusion_sequence_length(prompt, n_tokens)),
         "-ngl",
         GPU_LAYERS,
         *model_flags,
@@ -208,3 +250,85 @@ def run_diffusion_cli(
         raise CliProcessError(result.returncode, result.stdout, result.stderr)
 
     return extract_cli_output(result.stdout, result.stderr, clean_tail=clean_tail)
+
+
+async def run_diffusion_worker(
+    *,
+    model: str,
+    prompt: str,
+    n_tokens: int = DEFAULT_TOKENS,
+    steps: int = DEFAULT_STEPS,
+    temperature: float = DEFAULT_TEMP,
+    worker_url: str = DIFFUSION_WORKER_URL,
+    models_dir: str = MODELS_DIR,
+    clean_tail: bool = False,
+) -> str:
+    model_config = get_model_config(model)
+    if model_config is None:
+        raise UnknownModelError(model)
+
+    model_path = resolve_model_path(model, models_dir)
+    payload = {
+        "model": model,
+        "model_path": str(model_path),
+        "prompt": prompt,
+        "n_tokens": n_tokens,
+        "steps": steps,
+        "temperature": temperature,
+        "use_chat_template": False,
+        "model_flags": list(model_config["flags"]),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=WORKER_REQUEST_TIMEOUT_SECONDS) as client:
+            response = await client.post(f"{worker_url}/generate", json=payload)
+    except httpx.HTTPError as exc:
+        raise WorkerUnavailableError(worker_url, str(exc)) from exc
+
+    if response.status_code >= 400:
+        raise WorkerProcessError(response.status_code, response.text)
+
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise WorkerProcessError(response.status_code, response.text) from exc
+
+    text = str(body.get("text") or "")
+    return clean_cli_output(text) if clean_tail else text
+
+
+async def run_diffusion(
+    *,
+    model: str,
+    prompt: str,
+    n_tokens: int = DEFAULT_TOKENS,
+    steps: int = DEFAULT_STEPS,
+    temperature: float = DEFAULT_TEMP,
+    clean_tail: bool = False,
+) -> str:
+    if USE_PERSISTENT_WORKER:
+        try:
+            return await run_diffusion_worker(
+                model=model,
+                prompt=prompt,
+                n_tokens=n_tokens,
+                steps=steps,
+                temperature=temperature,
+                clean_tail=clean_tail,
+            )
+        except WorkerUnavailableError:
+            if not FALLBACK_TO_CLI:
+                raise
+        except WorkerProcessError as exc:
+            if not FALLBACK_TO_CLI or exc.status_code != 409:
+                raise
+
+    return await asyncio.to_thread(
+        run_diffusion_cli,
+        model=model,
+        prompt=prompt,
+        n_tokens=n_tokens,
+        steps=steps,
+        temperature=temperature,
+        clean_tail=clean_tail,
+    )

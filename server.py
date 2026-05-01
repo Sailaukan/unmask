@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import sys
 import time
@@ -9,12 +8,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import uvicorn
 
-from config import DEFAULT_STEPS, DEFAULT_TEMP, DEFAULT_TOKENS, HOST, PORT
+from config import DEFAULT_STEPS, DEFAULT_TEMP, DEFAULT_TOKENS, FALLBACK_TO_CLI, HOST, PORT, USE_PERSISTENT_WORKER
 from registry import get_model_config, list_models
 from runner import (
     CliNotFoundError,
@@ -22,12 +21,17 @@ from runner import (
     CliTimeoutError,
     ModelFileNotFoundError,
     UnknownModelError,
-    run_diffusion_cli,
+    WorkerNotFoundError,
+    WorkerProcessError,
+    WorkerUnavailableError,
+    run_diffusion,
     validate_cli_path,
 )
+from worker import DiffusionWorkerManager, describe_worker_startup_error
 
 DEFAULT_MODEL = "dream:7b"
 ACTIVE_MODEL = DEFAULT_MODEL
+WORKER_MANAGER = DiffusionWorkerManager()
 
 def print_cli_status() -> None:
     try:
@@ -45,8 +49,23 @@ def print_cli_status() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    print_cli_status()
-    yield
+    if USE_PERSISTENT_WORKER:
+        try:
+            await WORKER_MANAGER.start(ACTIVE_MODEL)
+        except Exception as exc:
+            message = describe_worker_startup_error(exc)
+            if not FALLBACK_TO_CLI:
+                raise RuntimeError(message) from exc
+            print(f"WARNING: persistent worker unavailable: {message}", file=sys.stderr)
+            print("unmask will fall back to llama-diffusion-cli per request.", file=sys.stderr)
+
+    if FALLBACK_TO_CLI:
+        print_cli_status()
+
+    try:
+        yield
+    finally:
+        await WORKER_MANAGER.stop()
 
 
 app = FastAPI(title="unmask", version="1.0.0", lifespan=lifespan)
@@ -288,6 +307,35 @@ def runner_error_to_http(exc: Exception) -> HTTPException:
             },
         )
 
+    if isinstance(exc, WorkerNotFoundError):
+        return HTTPException(
+            status_code=500,
+            detail={
+                "error": str(exc),
+                "worker_path": str(exc.worker_path),
+            },
+        )
+
+    if isinstance(exc, WorkerUnavailableError):
+        return HTTPException(
+            status_code=503,
+            detail={
+                "error": str(exc),
+                "worker_url": exc.worker_url,
+                "detail": exc.detail,
+            },
+        )
+
+    if isinstance(exc, WorkerProcessError):
+        return HTTPException(
+            status_code=exc.status_code if 400 <= exc.status_code < 500 else 500,
+            detail={
+                "error": str(exc),
+                "status_code": exc.status_code,
+                "body": exc.body[-2000:],
+            },
+        )
+
     return HTTPException(status_code=500, detail=f"Unexpected runner error: {exc}")
 
 
@@ -300,8 +348,7 @@ async def run_model(
     clean_tail: bool,
 ) -> str:
     try:
-        return await asyncio.to_thread(
-            run_diffusion_cli,
+        return await run_diffusion(
             model=model,
             prompt=prompt,
             n_tokens=n_tokens,
