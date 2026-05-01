@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Local model files are large and should be downloaded separately.
+models/
+*.gguf
