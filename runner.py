@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import subprocess
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
@@ -82,6 +84,11 @@ class WorkerProcessError(RunnerError):
         self.status_code = status_code
         self.body = body
         super().__init__(f"llama-diffusion-server returned HTTP {status_code}")
+
+
+class StreamingUnavailableError(RunnerError):
+    def __init__(self) -> None:
+        super().__init__("Streaming requires the persistent llama-diffusion-server worker.")
 
 
 def extract_cli_output(stdout: str, stderr: str, *, clean_tail: bool = False) -> str:
@@ -203,6 +210,32 @@ def estimated_diffusion_sequence_length(prompt: str, n_tokens: int) -> int:
     return max(64, n_tokens + estimated_prompt_tokens)
 
 
+def worker_payload(
+    *,
+    model: str,
+    prompt: str,
+    n_tokens: int,
+    steps: int,
+    temperature: float,
+    models_dir: str = MODELS_DIR,
+) -> dict[str, object]:
+    model_config = get_model_config(model)
+    if model_config is None:
+        raise UnknownModelError(model)
+
+    model_path = resolve_model_path(model, models_dir)
+    return {
+        "model": model,
+        "model_path": str(model_path),
+        "prompt": prompt,
+        "n_tokens": n_tokens,
+        "steps": steps,
+        "temperature": temperature,
+        "use_chat_template": False,
+        "model_flags": list(model_config["flags"]),
+    }
+
+
 def run_diffusion_cli(
     *,
     model: str,
@@ -218,7 +251,6 @@ def run_diffusion_cli(
     model_config = get_model_config(model)
     if model_config is None:
         raise UnknownModelError(model)
-
     model_path = resolve_model_path(model, models_dir)
     cli = validate_cli_path(cli_path)
     model_flags = list(model_config["flags"])
@@ -263,21 +295,14 @@ async def run_diffusion_worker(
     models_dir: str = MODELS_DIR,
     clean_tail: bool = False,
 ) -> str:
-    model_config = get_model_config(model)
-    if model_config is None:
-        raise UnknownModelError(model)
-
-    model_path = resolve_model_path(model, models_dir)
-    payload = {
-        "model": model,
-        "model_path": str(model_path),
-        "prompt": prompt,
-        "n_tokens": n_tokens,
-        "steps": steps,
-        "temperature": temperature,
-        "use_chat_template": False,
-        "model_flags": list(model_config["flags"]),
-    }
+    payload = worker_payload(
+        model=model,
+        prompt=prompt,
+        n_tokens=n_tokens,
+        steps=steps,
+        temperature=temperature,
+        models_dir=models_dir,
+    )
 
     try:
         async with httpx.AsyncClient(timeout=WORKER_REQUEST_TIMEOUT_SECONDS) as client:
@@ -295,6 +320,57 @@ async def run_diffusion_worker(
 
     text = str(body.get("text") or "")
     return clean_cli_output(text) if clean_tail else text
+
+
+async def stream_diffusion_worker(
+    *,
+    model: str,
+    prompt: str,
+    n_tokens: int = DEFAULT_TOKENS,
+    steps: int = DEFAULT_STEPS,
+    temperature: float = DEFAULT_TEMP,
+    worker_url: str = DIFFUSION_WORKER_URL,
+    models_dir: str = MODELS_DIR,
+    clean_tail: bool = False,
+) -> AsyncIterator[dict[str, object]]:
+    if not USE_PERSISTENT_WORKER:
+        raise StreamingUnavailableError()
+
+    payload = worker_payload(
+        model=model,
+        prompt=prompt,
+        n_tokens=n_tokens,
+        steps=steps,
+        temperature=temperature,
+        models_dir=models_dir,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=WORKER_REQUEST_TIMEOUT_SECONDS) as client:
+            async with client.stream("POST", f"{worker_url}/generate/stream", json=payload) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise WorkerProcessError(response.status_code, body.decode("utf-8", errors="replace"))
+
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise WorkerProcessError(500, line) from exc
+                    if not isinstance(chunk, dict):
+                        raise WorkerProcessError(500, line)
+                    if "error" in chunk:
+                        raise WorkerProcessError(500, json.dumps(chunk))
+
+                    text = str(chunk.get("text") or "")
+                    if clean_tail:
+                        text = clean_cli_output(text)
+                    chunk["text"] = text
+                    yield chunk
+    except httpx.HTTPError as exc:
+        raise WorkerUnavailableError(worker_url, str(exc)) from exc
 
 
 async def run_diffusion(

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>unmask — diffusion streaming demo</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-name">unmask</span>
+          <span class="brand-badge">demo</span>
+          <span class="brand-sep"></span>
+          <span class="brand-desc">Compare buffered vs. streaming diffusion inference</span>
+        </div>
+        <div id="serverStatus" class="status-pill">Ready</div>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="panel" aria-label="Request controls">
+        <div class="panel-header">
+          <h2>Inference Parameters</h2>
+        </div>
+        <div class="panel-body">
+          <div class="form-grid">
+            <label class="span-2">
+              <span>API URL</span>
+              <input id="apiUrl" type="url" value="http://localhost:11434">
+            </label>
+            <label class="span-2">
+              <span>Model</span>
+              <input id="model" type="text" value="dream-coder:7b">
+            </label>
+            <label class="span-4">
+              <span>Prompt</span>
+              <textarea id="prompt" rows="4">Write a Python function add(a, b) that returns a + b.</textarea>
+            </label>
+            <label>
+              <span>Tokens</span>
+              <input id="tokens" type="number" min="1" max="512" value="64">
+            </label>
+            <label>
+              <span>Steps</span>
+              <input id="steps" type="number" min="1" max="256" value="16">
+            </label>
+            <label>
+              <span>Temperature</span>
+              <input id="temperature" type="number" min="0" max="2" step="0.05" value="0.2">
+            </label>
+            <label class="checkbox-row">
+              <input id="cleanTail" type="checkbox" checked>
+              <span>Clean tail</span>
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button id="runBoth" type="button">Run both</button>
+            <button id="runBuffered" type="button" class="secondary">Buffered only</button>
+            <button id="runStreaming" type="button" class="secondary">Streaming only</button>
+            <div class="button-spacer"></div>
+            <button id="stop" type="button" class="ghost" disabled>Stop</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="results-grid" aria-label="Results">
+        <article class="result-panel">
+          <header>
+            <div>
+              <h2>Buffered</h2>
+              <p>One complete response after inference finishes.</p>
+            </div>
+            <span id="bufferedMeta" class="metric">Not run</span>
+          </header>
+          <div class="panel-content">
+            <pre id="bufferedOutput" class="output-box"></pre>
+          </div>
+        </article>
+
+        <article class="result-panel">
+          <header>
+            <div>
+              <h2>Streaming</h2>
+              <p>Full text snapshot after each diffusion step.</p>
+            </div>
+            <span id="streamingMeta" class="metric">Not run</span>
+          </header>
+          <div class="panel-content">
+            <div class="progress-wrap">
+              <div id="streamingProgress" class="progress-bar"></div>
+            </div>
+            <pre id="streamingOutput" class="output-box"></pre>
+            <ol id="stepList" class="step-list" aria-label="Streaming steps"></ol>
+          </div>
+        </article>
+      </div>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -130,8 +130,10 @@ OpenAI-compatible:
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
-Streaming is intentionally not implemented yet. The server buffers the full
-worker output and returns one complete response.
+Streaming is supported when the persistent worker is available. Diffusion
+streaming is step-based: each chunk contains the current full text snapshot
+after a denoising step. This is different from autoregressive token streaming,
+where each chunk is only the next token.
 
 By default, `unmask` returns raw model output. If a diffusion model produces a
 degenerate tail such as repeated `2 2 2` or repeated role labels, opt into
@@ -201,11 +203,62 @@ curl http://localhost:11434/v1/chat/completions \
   }'
 ```
 
+Ollama streaming:
+
+```bash
+curl -N http://localhost:11434/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dream-coder:7b",
+    "prompt": "Write a Python function add(a, b).",
+    "stream": true,
+    "options": {
+      "num_predict": 64,
+      "num_steps": 16,
+      "temperature": 0.2,
+      "clean_tail": true
+    }
+  }'
+```
+
+OpenAI-compatible streaming:
+
+```bash
+curl -N http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dream-coder:7b",
+    "messages": [
+      {"role": "user", "content": "Write hello in Python."}
+    ],
+    "stream": true,
+    "max_tokens": 64,
+    "diffusion_steps": 16,
+    "temperature": 0.2
+  }'
+```
+
 Direct worker check:
 
 ```bash
 MODEL_PATH="$HOME/unmask/models/Dream-Coder-v0-Base-7B.i1-Q4_K_S.gguf"
 curl http://localhost:8088/generate \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model_path\": \"$MODEL_PATH\",
+    \"prompt\": \"write hello\",
+    \"n_tokens\": 16,
+    \"steps\": 8,
+    \"temperature\": 0.2,
+    \"model_flags\": [\"--diffusion-eps\", \"0.001\", \"--diffusion-algorithm\", \"3\"]
+  }"
+```
+
+Direct worker streaming:
+
+```bash
+MODEL_PATH="$HOME/unmask/models/Dream-Coder-v0-Base-7B.i1-Q4_K_S.gguf"
+curl -N http://localhost:8088/generate/stream \
   -H "Content-Type: application/json" \
   -d "{
     \"model_path\": \"$MODEL_PATH\",
@@ -249,6 +302,31 @@ dream-coder:7b
 llada:8b
 ```
 
+## Browser Demo
+
+A simple local demo page lives in:
+
+```text
+demo/index.html
+```
+
+Start `unmask` first:
+
+```bash
+python server.py --model dream-coder:7b
+```
+
+Then open the demo directly in your browser:
+
+```bash
+open demo/index.html
+```
+
+The page calls `http://localhost:11434/api/generate` and shows buffered output
+next to step-streamed diffusion snapshots.
+
+![unmask demo](demo/demo-preview.png)
+
 ## Model Registry
 
 Model-specific diffusion flags live in `registry.py`. Dream and LLaDA flags are
@@ -279,3 +357,5 @@ MODELS = {
 - CLI timeout: HTTP `504`.
 - CLI nonzero exit: HTTP `500` with recent stdout/stderr.
 - Worker request errors: HTTP `400` or `500` with the worker response body.
+- Streaming errors are returned as a final streamed error chunk when headers
+  have already been sent.

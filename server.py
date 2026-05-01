@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import uvicorn
 
 from config import DEFAULT_STEPS, DEFAULT_TEMP, DEFAULT_TOKENS, FALLBACK_TO_CLI, HOST, PORT, USE_PERSISTENT_WORKER
@@ -20,11 +20,13 @@ from runner import (
     CliProcessError,
     CliTimeoutError,
     ModelFileNotFoundError,
+    StreamingUnavailableError,
     UnknownModelError,
     WorkerNotFoundError,
     WorkerProcessError,
     WorkerUnavailableError,
     run_diffusion,
+    stream_diffusion_worker,
     validate_cli_path,
 )
 from worker import DiffusionWorkerManager, describe_worker_startup_error
@@ -155,7 +157,7 @@ def parse_float(value: Any, default: float, field_name: str) -> float:
     return parsed
 
 
-def parse_bool(value: Any, default: bool = False) -> bool:
+def parse_bool(value: Any, default: bool = False, field_name: str = "boolean value") -> bool:
     if value is None:
         return default
     if isinstance(value, bool):
@@ -168,7 +170,7 @@ def parse_bool(value: Any, default: bool = False) -> bool:
             return False
     if isinstance(value, int):
         return bool(value)
-    raise HTTPException(status_code=400, detail="clean_tail must be a boolean.")
+    raise HTTPException(status_code=400, detail=f"{field_name} must be a boolean.")
 
 
 def generation_params(body: dict[str, Any]) -> tuple[int, int, float]:
@@ -205,7 +207,14 @@ def generation_params(body: dict[str, Any]) -> tuple[int, int, float]:
 
 def should_clean_tail(body: dict[str, Any]) -> bool:
     options = parse_options(body)
-    return parse_bool(first_present(body.get("clean_tail"), options.get("clean_tail"), default=False))
+    return parse_bool(
+        first_present(body.get("clean_tail"), options.get("clean_tail"), default=False),
+        field_name="clean_tail",
+    )
+
+
+def should_stream(body: dict[str, Any]) -> bool:
+    return parse_bool(body.get("stream"), default=False, field_name="stream")
 
 
 def messages_to_chatml(messages: Any) -> str:
@@ -336,6 +345,14 @@ def runner_error_to_http(exc: Exception) -> HTTPException:
             },
         )
 
+    if isinstance(exc, StreamingUnavailableError):
+        return HTTPException(
+            status_code=501,
+            detail={
+                "error": str(exc),
+            },
+        )
+
     return HTTPException(status_code=500, detail=f"Unexpected runner error: {exc}")
 
 
@@ -360,13 +377,140 @@ async def run_model(
         raise runner_error_to_http(exc) from exc
 
 
+def streaming_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+
+
+def error_detail(exc: Exception) -> Any:
+    http_exc = runner_error_to_http(exc)
+    return http_exc.detail
+
+
+async def ollama_generate_stream(
+    *,
+    model: str,
+    prompt: str,
+    n_tokens: int,
+    steps: int,
+    temperature: float,
+    clean_tail: bool,
+):
+    try:
+        async for chunk in stream_diffusion_worker(
+            model=model,
+            prompt=prompt,
+            n_tokens=n_tokens,
+            steps=steps,
+            temperature=temperature,
+            clean_tail=clean_tail,
+        ):
+            done = bool(chunk.get("done"))
+            payload: dict[str, Any] = {
+                "model": model,
+                "created_at": utc_now(),
+                "response": str(chunk.get("text") or ""),
+                "done": done,
+                "diffusion_step": int(chunk.get("step") or 0),
+                "diffusion_steps": int(chunk.get("total_steps") or steps),
+            }
+            if done:
+                payload["done_reason"] = "stop"
+            yield json.dumps(payload) + "\n"
+    except Exception as exc:
+        yield json.dumps({"error": error_detail(exc), "done": True}) + "\n"
+
+
+async def ollama_chat_stream(
+    *,
+    model: str,
+    prompt: str,
+    n_tokens: int,
+    steps: int,
+    temperature: float,
+    clean_tail: bool,
+):
+    try:
+        async for chunk in stream_diffusion_worker(
+            model=model,
+            prompt=prompt,
+            n_tokens=n_tokens,
+            steps=steps,
+            temperature=temperature,
+            clean_tail=clean_tail,
+        ):
+            done = bool(chunk.get("done"))
+            payload: dict[str, Any] = {
+                "model": model,
+                "created_at": utc_now(),
+                "message": {
+                    "role": "assistant",
+                    "content": str(chunk.get("text") or ""),
+                },
+                "done": done,
+                "diffusion_step": int(chunk.get("step") or 0),
+                "diffusion_steps": int(chunk.get("total_steps") or steps),
+            }
+            if done:
+                payload["done_reason"] = "stop"
+            yield json.dumps(payload) + "\n"
+    except Exception as exc:
+        yield json.dumps({"error": error_detail(exc), "done": True}) + "\n"
+
+
+async def openai_chat_stream(
+    *,
+    model: str,
+    prompt: str,
+    n_tokens: int,
+    steps: int,
+    temperature: float,
+    clean_tail: bool,
+):
+    stream_id = f"chatcmpl-{int(time.time() * 1000)}"
+    created = int(time.time())
+
+    try:
+        async for chunk in stream_diffusion_worker(
+            model=model,
+            prompt=prompt,
+            n_tokens=n_tokens,
+            steps=steps,
+            temperature=temperature,
+            clean_tail=clean_tail,
+        ):
+            done = bool(chunk.get("done"))
+            payload = {
+                "id": stream_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "content": str(chunk.get("text") or ""),
+                        },
+                        "finish_reason": "stop" if done else None,
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+    except Exception as exc:
+        yield f"data: {json.dumps({'error': error_detail(exc)})}\n\n"
+
+    yield "data: [DONE]\n\n"
+
+
 @app.get("/api/tags")
 async def api_tags() -> dict[str, Any]:
     return {"models": [ollama_model_entry(name) for name in list_models()]}
 
 
 @app.post("/api/generate")
-async def api_generate(request: Request) -> JSONResponse:
+async def api_generate(request: Request):
     body = await read_json_object(request)
     model = requested_model(body)
     prompt = coerce_text(body.get("prompt"))
@@ -375,6 +519,20 @@ async def api_generate(request: Request) -> JSONResponse:
 
     n_tokens, steps, temperature = generation_params(body)
     clean_tail = should_clean_tail(body)
+    if should_stream(body):
+        return StreamingResponse(
+            ollama_generate_stream(
+                model=model,
+                prompt=prompt,
+                n_tokens=n_tokens,
+                steps=steps,
+                temperature=temperature,
+                clean_tail=clean_tail,
+            ),
+            media_type="application/x-ndjson",
+            headers=streaming_headers(),
+        )
+
     output = await run_model(model, prompt, n_tokens, steps, temperature, clean_tail)
 
     return JSONResponse(
@@ -389,12 +547,26 @@ async def api_generate(request: Request) -> JSONResponse:
 
 
 @app.post("/api/chat")
-async def api_chat(request: Request) -> JSONResponse:
+async def api_chat(request: Request):
     body = await read_json_object(request)
     model = requested_model(body)
     prompt = messages_to_chatml(body.get("messages"))
     n_tokens, steps, temperature = generation_params(body)
     clean_tail = should_clean_tail(body)
+    if should_stream(body):
+        return StreamingResponse(
+            ollama_chat_stream(
+                model=model,
+                prompt=prompt,
+                n_tokens=n_tokens,
+                steps=steps,
+                temperature=temperature,
+                clean_tail=clean_tail,
+            ),
+            media_type="application/x-ndjson",
+            headers=streaming_headers(),
+        )
+
     output = await run_model(model, prompt, n_tokens, steps, temperature, clean_tail)
 
     return JSONResponse(
@@ -420,12 +592,26 @@ async def v1_models() -> dict[str, Any]:
 
 
 @app.post("/v1/chat/completions")
-async def v1_chat_completions(request: Request) -> JSONResponse:
+async def v1_chat_completions(request: Request):
     body = await read_json_object(request)
     model = requested_model(body)
     prompt = messages_to_chatml(body.get("messages"))
     n_tokens, steps, temperature = generation_params(body)
     clean_tail = should_clean_tail(body)
+    if should_stream(body):
+        return StreamingResponse(
+            openai_chat_stream(
+                model=model,
+                prompt=prompt,
+                n_tokens=n_tokens,
+                steps=steps,
+                temperature=temperature,
+                clean_tail=clean_tail,
+            ),
+            media_type="text/event-stream",
+            headers=streaming_headers(),
+        )
+
     output = await run_model(model, prompt, n_tokens, steps, temperature, clean_tail)
 
     return JSONResponse(

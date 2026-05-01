@@ -1,0 +1,496 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg:             #0c0c0e;
+  --surface-0:      #111114;
+  --surface-1:      #18181c;
+  --surface-2:      #1e1e23;
+  --border:         #28282f;
+  --border-strong:  #38383f;
+  --text-1:         #ececee;
+  --text-2:         #7f7f8c;
+  --text-3:         #3e3e48;
+  --accent:         #8b5cf6;
+  --accent-dim:     #6d28d9;
+  --accent-bg:      rgba(139, 92, 246, 0.09);
+  --accent-border:  rgba(139, 92, 246, 0.28);
+  --green:          #34d399;
+  --green-bg:       rgba(52, 211, 153, 0.08);
+  --green-border:   rgba(52, 211, 153, 0.22);
+  --red:            #f87171;
+  --red-bg:         rgba(248, 113, 113, 0.08);
+  --red-border:     rgba(248, 113, 113, 0.22);
+  --font-sans:      -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:      ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace;
+  --radius-sm:      5px;
+  --radius:         8px;
+  --radius-lg:      12px;
+}
+
+html { color-scheme: dark; }
+
+body {
+  background: var(--bg);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Header ───────────────────────────────────────────── */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 50px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-name {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-1);
+}
+
+.brand-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  line-height: 1;
+}
+
+.brand-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border-strong);
+}
+
+.brand-desc {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* ─── Status pill ────────────────────────────────────────── */
+
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px 4px 10px;
+  user-select: none;
+}
+
+.status-pill::before {
+  content: "";
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.status-pill.running {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.status-pill.running::before {
+  background: var(--accent);
+  animation: blink 1.1s ease-in-out infinite;
+}
+
+.status-pill.error {
+  color: var(--red);
+  border-color: var(--red-border);
+  background: var(--red-bg);
+}
+.status-pill.error::before {
+  background: var(--red);
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* ─── Shell ──────────────────────────────────────────────── */
+
+.app-shell {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 20px 24px 32px;
+}
+
+/* ─── Panel ──────────────────────────────────────────────── */
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-header h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.panel-body {
+  padding: 18px 20px 20px;
+}
+
+/* ─── Form ───────────────────────────────────────────────── */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.span-2 { grid-column: span 2; }
+.span-4 { grid-column: span 4; }
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+label > span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+input,
+textarea {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  padding: 8px 10px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  width: 100%;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+textarea {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  min-height: 88px;
+  resize: vertical;
+}
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  align-self: end;
+  padding-bottom: 1px;
+  min-height: 36px;
+}
+
+.checkbox-row input {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.checkbox-row span {
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* ─── Buttons ────────────────────────────────────────────── */
+
+.button-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.button-spacer {
+  flex: 1;
+}
+
+button {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  height: 34px;
+  padding: 0 14px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
+  white-space: nowrap;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+#runBoth {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+  color: #fff;
+}
+#runBoth:not(:disabled):hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+button.secondary {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--text-1);
+}
+button.secondary:not(:disabled):hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-2);
+}
+button.ghost:not(:disabled):hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+/* ─── Results ────────────────────────────────────────────── */
+
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.result-panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  min-height: 500px;
+  overflow: hidden;
+}
+
+.result-panel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.result-panel header h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+}
+
+.result-panel header p {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.metric {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  margin-top: 1px;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.panel-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+/* ─── Progress ───────────────────────────────────────────── */
+
+.progress-wrap {
+  height: 2px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 120ms ease;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+}
+
+/* ─── Output box ─────────────────────────────────────────── */
+
+.output-box {
+  flex: 1;
+  min-height: 280px;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: #c9c9d4;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  overflow: auto;
+  padding: 14px 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ─── Step list ──────────────────────────────────────────── */
+
+.step-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  max-height: 72px;
+  overflow: auto;
+}
+
+.step-list li {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+}
+
+.step-list li.done {
+  background: var(--green-bg);
+  border-color: var(--green-border);
+  color: var(--green);
+}
+
+/* ─── Responsive ─────────────────────────────────────────── */
+
+@media (max-width: 960px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .brand-sep,
+  .brand-desc {
+    display: none;
+  }
+
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .span-2,
+  .span-4 {
+    grid-column: span 2;
+  }
+
+  .results-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .result-panel {
+    min-height: 380px;
+  }
+}
+
+@media (max-width: 480px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2,
+  .span-4 {
+    grid-column: span 1;
+  }
+}

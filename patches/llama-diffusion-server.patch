@@ -23,16 +23,17 @@ index 70228d407..ea3f37f82 100644
 +target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 diff --git a/examples/diffusion/diffusion-engine.h b/examples/diffusion/diffusion-engine.h
 new file mode 100644
-index 000000000..120452090
+index 000000000..86144719f
 --- /dev/null
 +++ b/examples/diffusion/diffusion-engine.h
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,87 @@
 +#pragma once
 +
 +#include "common.h"
 +#include "llama.h"
 +
 +#include <cstdint>
++#include <functional>
 +#include <mutex>
 +#include <string>
 +
@@ -67,6 +68,18 @@ index 000000000..120452090
 +    double      total_ms         = 0.0;
 +};
 +
++struct diffusion_stream_chunk {
++    std::string text;
++    int32_t     step             = 0;
++    int32_t     total_steps      = 0;
++    int32_t     prompt_tokens    = 0;
++    int32_t     generated_tokens = 0;
++    int32_t     sequence_length  = 0;
++    bool        done             = false;
++};
++
++using diffusion_stream_callback = std::function<bool(const diffusion_stream_chunk &)>;
++
 +class diffusion_engine {
 +public:
 +    diffusion_engine() = default;
@@ -80,6 +93,9 @@ index 000000000..120452090
 +
 +    diffusion_generation_request make_request_from_defaults() const;
 +    diffusion_generation_result generate(const diffusion_generation_request & request);
++    diffusion_generation_result generate_stream(
++        const diffusion_generation_request & request,
++        diffusion_stream_callback            callback);
 +
 +    std::string model_path() const;
 +    uint32_t context_size() const;
@@ -93,13 +109,17 @@ index 000000000..120452090
 +    llama_context *      ctx_   = nullptr;
 +    const llama_vocab *  vocab_ = nullptr;
 +    mutable std::mutex   mutex_;
++
++    diffusion_generation_result generate_impl(
++        const diffusion_generation_request & request,
++        const diffusion_stream_callback *    callback);
 +};
 diff --git a/examples/diffusion/diffusion-engine.cpp b/examples/diffusion/diffusion-engine.cpp
 new file mode 100644
-index 000000000..a1bce80ba
+index 000000000..37510e0df
 --- /dev/null
 +++ b/examples/diffusion/diffusion-engine.cpp
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,751 @@
 +#include "diffusion-engine.h"
 +
 +#include "chat.h"
@@ -108,6 +128,7 @@ index 000000000..a1bce80ba
 +#include <algorithm>
 +#include <cmath>
 +#include <cstring>
++#include <functional>
 +#include <limits>
 +#include <random>
 +#include <stdexcept>
@@ -155,6 +176,8 @@ index 000000000..a1bce80ba
 +    int64_t total_us    = 0;
 +    int64_t sampling_us = 0;
 +};
++
++using diffusion_step_callback = std::function<bool(int32_t, int32_t, const llama_token *, int32_t)>;
 +
 +static float calculate_confidence(const llama_token_data_array & cur_p,
 +                                  diffusion_algorithm            algorithm,
@@ -242,7 +265,8 @@ index 000000000..a1bce80ba
 +                                           llama_token *            output_tokens,
 +                                           int32_t                  n_input,
 +                                           const diffusion_params & params,
-+                                           int32_t &                n_generated) {
++                                           int32_t &                n_generated,
++                                           const diffusion_step_callback & step_callback = nullptr) {
 +    n_generated = 0;
 +    diffusion_timing timing;
 +
@@ -303,7 +327,9 @@ index 000000000..a1bce80ba
 +
 +    const int64_t time_start = ggml_time_us();
 +
-+    for (int block_num = 0; block_num < num_blocks; block_num++) {
++    bool stop_requested = false;
++
++    for (int block_num = 0; block_num < num_blocks && !stop_requested; block_num++) {
 +        const int32_t block_start = (params.schedule == BLOCK_BASED) ? n_input + block_num * params.block_length : 0;
 +        const int32_t block_end   = (params.schedule == BLOCK_BASED) ?
 +                                        std::min(n_input + (block_num + 1) * params.block_length, params.max_length) :
@@ -319,7 +345,9 @@ index 000000000..a1bce80ba
 +            num_transfer_tokens = get_num_transfer_tokens(block_mask_count, steps_per_block);
 +        }
 +
-+        for (int32_t step = 0; step < steps_per_block; step++) {
++        for (int32_t step = 0; step < steps_per_block && !stop_requested; step++) {
++            const int32_t global_step = block_num * steps_per_block + step;
++
 +            for (int32_t i = 0; i < params.max_length; i++) {
 +                batch.token[i]     = output_tokens[i];
 +                batch.pos[i]       = i;
@@ -498,6 +526,11 @@ index 000000000..a1bce80ba
 +            }
 +
 +            timing.sampling_us += ggml_time_us() - time_start_sampling;
++
++            if (step_callback && global_step + 1 < params.steps &&
++                !step_callback(global_step + 1, params.steps, output_tokens, params.max_length)) {
++                stop_requested = true;
++            }
 +        }
 +    }
 +
@@ -545,6 +578,28 @@ index 000000000..a1bce80ba
 +    }
 +    const int32_t remainder = value % multiple;
 +    return remainder == 0 ? value : value + multiple - remainder;
++}
++
++static std::string detokenize_generated_snapshot(const llama_vocab * vocab,
++                                                 const llama_token * tokens,
++                                                 int32_t             n_input,
++                                                 int32_t             n_generated,
++                                                 int32_t             n_predict,
++                                                 llama_token         mask_token_id) {
++    const int32_t generated_tokens = std::max(0, std::min(n_predict, n_generated - n_input));
++    std::string   text;
++    text.reserve(generated_tokens * 4);
++
++    for (int32_t i = 0; i < generated_tokens; i++) {
++        const llama_token token = tokens[n_input + i];
++        if (token == mask_token_id) {
++            text += ' ';
++            continue;
++        }
++        text += common_token_to_piece(vocab, token, false);
++    }
++
++    return text;
 +}
 +
 +} // namespace
@@ -638,7 +693,19 @@ index 000000000..a1bce80ba
 +
 +diffusion_generation_result diffusion_engine::generate(const diffusion_generation_request & request) {
 +    std::lock_guard<std::mutex> lock(mutex_);
++    return generate_impl(request, nullptr);
++}
 +
++diffusion_generation_result diffusion_engine::generate_stream(
++    const diffusion_generation_request & request,
++    diffusion_stream_callback            callback) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    return generate_impl(request, &callback);
++}
++
++diffusion_generation_result diffusion_engine::generate_impl(
++    const diffusion_generation_request & request,
++    const diffusion_stream_callback *    callback) {
 +    if (!model_ || !ctx_ || !vocab_) {
 +        throw std::runtime_error("diffusion engine is not loaded");
 +    }
@@ -731,24 +798,58 @@ index 000000000..a1bce80ba
 +
 +    int32_t n_generated = 0;
 +    std::vector<llama_token> output_tokens(max_length);
-+    diffusion_timing timing =
-+        diffusion_generate(ctx_, input_tokens.data(), output_tokens.data(), n_input, diff_params, n_generated);
++    bool stream_cancelled = false;
++
++    diffusion_step_callback step_callback;
++    if (callback) {
++        step_callback = [&](int32_t step, int32_t total_steps, const llama_token * tokens, int32_t n_tokens) {
++            diffusion_stream_chunk chunk;
++            chunk.text = detokenize_generated_snapshot(
++                vocab_, tokens, n_input, n_tokens, request.n_predict, mask_token_id);
++            chunk.step             = step;
++            chunk.total_steps      = total_steps;
++            chunk.prompt_tokens    = n_input;
++            chunk.generated_tokens = std::min(request.n_predict, n_tokens - n_input);
++            chunk.sequence_length  = n_tokens;
++            chunk.done             = false;
++
++            const bool keep_going = (*callback)(chunk);
++            if (!keep_going) {
++                stream_cancelled = true;
++            }
++            return keep_going;
++        };
++    }
++
++    diffusion_timing timing = diffusion_generate(
++        ctx_, input_tokens.data(), output_tokens.data(), n_input, diff_params, n_generated, step_callback);
 +
 +    if (n_generated <= n_input) {
 +        throw std::runtime_error("diffusion generation failed");
 +    }
 +
 +    const int32_t generated_tokens = std::min(request.n_predict, n_generated - n_input);
-+    std::vector<llama_token> generated(
-+        output_tokens.begin() + n_input, output_tokens.begin() + n_input + generated_tokens);
-+
 +    diffusion_generation_result result;
-+    result.text             = common_detokenize(vocab_, generated, false);
++    result.text             = detokenize_generated_snapshot(
++        vocab_, output_tokens.data(), n_input, n_generated, request.n_predict, mask_token_id);
 +    result.prompt_tokens    = n_input;
 +    result.generated_tokens = generated_tokens;
 +    result.sequence_length  = max_length;
 +    result.steps_used       = steps;
 +    result.total_ms         = timing.total_us / 1000.0;
++
++    if (callback && !stream_cancelled) {
++        diffusion_stream_chunk final_chunk;
++        final_chunk.text             = result.text;
++        final_chunk.step             = steps;
++        final_chunk.total_steps      = steps;
++        final_chunk.prompt_tokens    = result.prompt_tokens;
++        final_chunk.generated_tokens = result.generated_tokens;
++        final_chunk.sequence_length  = result.sequence_length;
++        final_chunk.done             = true;
++        (*callback)(final_chunk);
++    }
++
 +    return result;
 +}
 +
@@ -772,10 +873,10 @@ index 000000000..a1bce80ba
 +}
 diff --git a/examples/diffusion/diffusion-server.cpp b/examples/diffusion/diffusion-server.cpp
 new file mode 100644
-index 000000000..c69fed666
+index 000000000..e414f76a9
 --- /dev/null
 +++ b/examples/diffusion/diffusion-server.cpp
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,359 @@
 +#include "diffusion-engine.h"
 +
 +#include "arg.h"
@@ -969,6 +1070,18 @@ index 000000000..c69fed666
 +    };
 +}
 +
++static json stream_chunk_json(const diffusion_stream_chunk & chunk) {
++    return {
++        { "step", chunk.step },
++        { "total_steps", chunk.total_steps },
++        { "text", chunk.text },
++        { "prompt_tokens", chunk.prompt_tokens },
++        { "generated_tokens", chunk.generated_tokens },
++        { "sequence_length", chunk.sequence_length },
++        { "done", chunk.done },
++    };
++}
++
 +} // namespace
 +
 +int main(int argc, char ** argv) {
@@ -1055,6 +1168,54 @@ index 000000000..c69fed666
 +                         { "steps_used", result.steps_used },
 +                         { "timings", { { "total_ms", result.total_ms } } },
 +                     });
++        } catch (const nlohmann::json::exception & e) {
++            set_json(res, 400, { { "error", std::string("invalid JSON request: ") + e.what() } });
++        } catch (const std::invalid_argument & e) {
++            set_json(res, 400, { { "error", e.what() } });
++        } catch (const std::exception & e) {
++            set_json(res, 500, { { "error", e.what() } });
++        }
++    });
++
++    server.Post("/generate/stream", [&](const httplib::Request & req, httplib::Response & res) {
++        try {
++            json body = json::parse(req.body);
++            const std::string expected_model_path = json_string(body, "model_path");
++            if (!expected_model_path.empty() && expected_model_path != engine.model_path()) {
++                set_json(res,
++                         409,
++                         {
++                             { "error", "worker has a different model loaded" },
++                             { "loaded_model_path", engine.model_path() },
++                             { "requested_model_path", expected_model_path },
++                         });
++                return;
++            }
++
++            diffusion_generation_request generation_request = request_from_json(engine, body);
++
++            set_cors(res);
++            res.set_header("Cache-Control", "no-cache");
++            res.set_header("X-Accel-Buffering", "no");
++            res.set_chunked_content_provider(
++                "application/x-ndjson",
++                [&engine, generation_request](size_t, httplib::DataSink & sink) {
++                    try {
++                        engine.generate_stream(generation_request, [&sink](const diffusion_stream_chunk & chunk) {
++                            const std::string line = stream_chunk_json(chunk).dump() + "\n";
++                            return sink.write(line.c_str(), line.size());
++                        });
++                    } catch (const std::exception & e) {
++                        const std::string line = json{
++                            { "error", e.what() },
++                            { "done", true },
++                        }.dump() + "\n";
++                        sink.write(line.c_str(), line.size());
++                    }
++
++                    sink.done();
++                    return true;
++                });
 +        } catch (const nlohmann::json::exception & e) {
 +            set_json(res, 400, { { "error", std::string("invalid JSON request: ") + e.what() } });
 +        } catch (const std::invalid_argument & e) {
