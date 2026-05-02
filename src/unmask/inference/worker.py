@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from config import (
+from unmask.config import (
     DIFFUSION_WORKER_HOST,
     DIFFUSION_WORKER_PORT,
     DIFFUSION_WORKER_URL,
@@ -19,14 +19,13 @@ from config import (
     WORKER_MAX_SEQUENCE_LENGTH,
     WORKER_STARTUP_TIMEOUT_SECONDS,
 )
-from registry import get_model_config
-from runner import (
+from unmask.inference.errors import (
     ModelFileNotFoundError,
     UnknownModelError,
     WorkerNotFoundError,
-    resolve_model_path,
-    validate_diffusion_server_path,
 )
+from unmask.inference.paths import resolve_model_path, validate_diffusion_server_path
+from unmask.models import get_model_config
 
 
 class DiffusionWorkerManager:

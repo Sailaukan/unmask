@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unmask"
+version = "1.0.0"
+description = "Local Ollama/OpenAI-compatible HTTP server for diffusion language models"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "uvicorn[standard]",
+]
+
+[project.scripts]
+unmask = "unmask.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

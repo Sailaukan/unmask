@@ -58,12 +58,18 @@ Expected filenames:
 ~/unmask/models/llada-8b-q4_k_m.gguf
 ```
 
-Edit `config.py` if your CLI or model directory is somewhere else.
+Edit `src/unmask/config.py` if your CLI or model directory is somewhere else.
 
 ## Install
 
 ```bash
 pip install -r requirements.txt
+```
+
+To install the package and the `unmask` console command from this checkout:
+
+```bash
+pip install -e .
 ```
 
 ## Run
@@ -97,6 +103,13 @@ If native Ollama is already using port `11434`, stop Ollama first or run
 
 ```bash
 python server.py --model dream:7b --port 11435
+```
+
+If you installed the package with `pip install -e .`, the same commands can be
+run through the console entrypoint:
+
+```bash
+unmask --model dream:7b
 ```
 
 On startup, `unmask` automatically starts:
@@ -327,10 +340,26 @@ next to step-streamed diffusion snapshots.
 
 ![unmask demo](demo/demo-preview.png)
 
+## Project Layout
+
+Runtime Python code lives under `src/unmask`:
+
+```text
+src/unmask/
+  api/          FastAPI app, protocol routes, request parsing, streaming adapters
+  inference/    CLI/worker execution, path validation, output cleanup
+  config.py     local paths and default runtime settings
+  models.py     model registry and diffusion flags
+  cli.py        command-line entrypoint
+```
+
+The root `server.py` file is a compatibility launcher for the existing
+`python server.py ...` workflow.
+
 ## Model Registry
 
-Model-specific diffusion flags live in `registry.py`. Dream and LLaDA flags are
-kept separate and must not be mixed:
+Model-specific diffusion flags live in `src/unmask/models.py`. Dream and LLaDA
+flags are kept separate and must not be mixed:
 
 ```python
 MODELS = {
