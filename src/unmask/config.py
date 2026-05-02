@@ -1,7 +1,13 @@
 """Configuration for the unmask local diffusion server."""
 
-CLI_PATH = "~/llama.cpp/build/bin/llama-diffusion-cli"
-DIFFUSION_SERVER_PATH = "~/llama.cpp/build/bin/llama-diffusion-server"
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LLAMA_CPP_DIR = PROJECT_ROOT / "llama.cpp"
+
+CLI_PATH = str(LLAMA_CPP_DIR / "build/bin/llama-diffusion-cli")
+DIFFUSION_SERVER_PATH = str(LLAMA_CPP_DIR / "build/bin/llama-diffusion-server")
 MODELS_DIR = "~/unmask/models"
 
 DEFAULT_STEPS = 128

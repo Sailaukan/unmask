@@ -127,7 +127,7 @@ def describe_worker_startup_error(exc: Exception) -> str:
     if isinstance(exc, WorkerNotFoundError):
         return (
             f"llama-diffusion-server was not found at {exc.worker_path}. "
-            "Build it with: cd ~/llama.cpp && cmake --build build --target llama-diffusion-server -j"
+            "Build it with: cd llama.cpp && cmake --build build --target llama-diffusion-server -j"
         )
     if isinstance(exc, ModelFileNotFoundError):
         return f"Model file was not found at {exc.model_path}"

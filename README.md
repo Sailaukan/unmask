@@ -25,23 +25,19 @@ model, `unmask` can fall back to `llama-diffusion-cli`.
 ## Prerequisites
 
 - Python 3.10+
-- `llama.cpp` built with Metal support on macOS
-- `llama-diffusion-server` and `llama-diffusion-cli` available at:
+- macOS with Metal support for the recommended GPU path
+- The included `llama.cpp` checkout built locally
 
 ```text
-~/llama.cpp/build/bin/llama-diffusion-server
-~/llama.cpp/build/bin/llama-diffusion-cli
+./llama.cpp/build/bin/llama-diffusion-server
+./llama.cpp/build/bin/llama-diffusion-cli
 ```
 
-Apply the included `llama.cpp` patch and build the persistent worker after
-pulling this project:
+Build or rebuild the diffusion binaries from the project root:
 
 ```bash
-UNMASK_DIR=~/Documents/projects/ML/unmask
-cd ~/llama.cpp
-git apply "$UNMASK_DIR/patches/llama-diffusion-server.patch"
-cmake -S . -B build
-cmake --build build --target llama-diffusion-server -j
+cmake -S llama.cpp -B llama.cpp/build -DGGML_METAL=ON
+cmake --build llama.cpp/build --target llama-diffusion-server llama-diffusion-cli -j
 ```
 
 - Model files downloaded under:
@@ -58,7 +54,9 @@ Expected filenames:
 ~/unmask/models/llada-8b-q4_k_m.gguf
 ```
 
-Edit `src/unmask/config.py` if your CLI or model directory is somewhere else.
+`src/unmask/config.py` points to the included `./llama.cpp/build/bin`
+binaries by default. Edit it only if you want to use an external `llama.cpp`
+checkout or a different model directory.
 
 ## Install
 
@@ -115,7 +113,7 @@ unmask --model dream:7b
 On startup, `unmask` automatically starts:
 
 ```text
-~/llama.cpp/build/bin/llama-diffusion-server
+./llama.cpp/build/bin/llama-diffusion-server
 ```
 
 The worker listens locally on:
@@ -147,6 +145,17 @@ Streaming is supported when the persistent worker is available. Diffusion
 streaming is step-based: each chunk contains the current full text snapshot
 after a denoising step. This is different from autoregressive token streaming,
 where each chunk is only the next token.
+
+The included `llama.cpp` checkout has diffusion-specific optimizations:
+
+- Sparse logits: only masked positions needed by the sampler request logits.
+- Smaller Metal readback: GPU-to-CPU logits copies scale with active rows instead
+  of the full sequence.
+- Profiling: direct worker responses include timing fields for decode, logits
+  readback, sampling, sorting, and estimated copied logits bytes.
+
+The deeper Metal-side sampler is not implemented yet. Sampling still happens on
+CPU, but it now reads far fewer logits rows.
 
 By default, `unmask` returns raw model output. If a diffusion model produces a
 degenerate tail such as repeated `2 2 2` or repeated role labels, opt into
@@ -267,6 +276,24 @@ curl http://localhost:8088/generate \
   }"
 ```
 
+The direct worker response includes profiling data:
+
+```json
+{
+  "timings": {
+    "total_ms": 1307.181,
+    "decode_ms": 126.499,
+    "logits_ms": 1162.975,
+    "sampling_ms": 17.688,
+    "sort_ms": 0.008,
+    "active_logits": 295,
+    "requested_logits": 295,
+    "skipped_logits": 265,
+    "logits_copy_bytes": 179435520
+  }
+}
+```
+
 Direct worker streaming:
 
 ```bash
@@ -345,6 +372,9 @@ next to step-streamed diffusion snapshots.
 Runtime Python code lives under `src/unmask`:
 
 ```text
+llama.cpp/    patched local llama.cpp checkout used by the worker
+patches/      historical patch/reference files for llama.cpp changes
+demo/         browser demo
 src/unmask/
   api/          FastAPI app, protocol routes, request parsing, streaming adapters
   inference/    CLI/worker execution, path validation, output cleanup
