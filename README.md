@@ -28,6 +28,27 @@ model, `unmask` can fall back to `llama-diffusion-cli`.
 - macOS with Metal support for the recommended GPU path
 - The included `llama.cpp` checkout built locally
 
+Clone with submodules so the patched `llama.cpp` checkout is available:
+
+```bash
+git clone --recurse-submodules https://github.com/Sailaukan/unmask.git
+cd unmask
+```
+
+If the repository was cloned without submodules, initialize it from the project
+root:
+
+```bash
+git submodule update --init --recursive
+```
+
+The `llama.cpp` submodule tracks:
+
+```text
+https://github.com/Sailaukan/llama.cpp.git
+branch: unmask-diffusion-optimizations
+```
+
 ```text
 ./llama.cpp/build/bin/llama-diffusion-server
 ./llama.cpp/build/bin/llama-diffusion-cli
@@ -57,6 +78,17 @@ Expected filenames:
 `src/unmask/config.py` points to the included `./llama.cpp/build/bin`
 binaries by default. Edit it only if you want to use an external `llama.cpp`
 checkout or a different model directory.
+
+To update the embedded `llama.cpp` checkout to the latest pushed optimization
+branch and rebuild:
+
+```bash
+git submodule update --remote llama.cpp
+cmake --build llama.cpp/build --target llama-diffusion-server llama-diffusion-cli -j
+```
+
+Commit the parent repository after updating the submodule pointer so other
+checkouts use the same `llama.cpp` revision.
 
 ## Install
 
@@ -156,6 +188,11 @@ The included `llama.cpp` checkout has diffusion-specific optimizations:
 
 The deeper Metal-side sampler is not implemented yet. Sampling still happens on
 CPU, but it now reads far fewer logits rows.
+
+These optimizations are inside the patched `llama.cpp` submodule, while
+`unmask` uses them through the persistent worker. The parent repository stores a
+pointer to the exact `llama.cpp` commit, not a copy of every upstream
+`llama.cpp` file.
 
 By default, `unmask` returns raw model output. If a diffusion model produces a
 degenerate tail such as repeated `2 2 2` or repeated role labels, opt into
