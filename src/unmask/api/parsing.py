@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from unmask.config import DEFAULT_STEPS, DEFAULT_TEMP, DEFAULT_TOKENS
+from unmask.config import DEFAULT_CLEAN_TAIL, DEFAULT_STEPS, DEFAULT_TEMP, DEFAULT_TOKENS
 
 
 async def read_json_object(request: Request) -> dict[str, Any]:
@@ -113,7 +113,7 @@ def generation_params(body: dict[str, Any]) -> tuple[int, int, float]:
 def should_clean_tail(body: dict[str, Any]) -> bool:
     options = parse_options(body)
     return parse_bool(
-        first_present(body.get("clean_tail"), options.get("clean_tail"), default=False),
+        first_present(body.get("clean_tail"), options.get("clean_tail"), default=DEFAULT_CLEAN_TAIL),
         field_name="clean_tail",
     )
 

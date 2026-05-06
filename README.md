@@ -194,13 +194,13 @@ These optimizations are inside the patched `llama.cpp` submodule, while
 pointer to the exact `llama.cpp` commit, not a copy of every upstream
 `llama.cpp` file.
 
-By default, `unmask` returns raw model output. If a diffusion model produces a
-degenerate tail such as repeated `2 2 2` or repeated role labels, opt into
-post-processing per request with:
+By default, `unmask` cleans common diffusion tails such as repeated `2 2 2`,
+special stop markers, and repeated role labels. To inspect raw model output,
+disable post-processing per request with:
 
 ```json
 {
-  "clean_tail": true
+  "clean_tail": false
 }
 ```
 
@@ -225,9 +225,8 @@ curl http://localhost:11434/api/generate \
     "stream": false,
     "options": {
       "num_predict": 128,
-      "num_steps": 128,
-      "temperature": 0.2,
-      "clean_tail": true
+      "num_steps": 256,
+      "temperature": 0.2
     }
   }'
 ```
@@ -273,9 +272,8 @@ curl -N http://localhost:11434/api/generate \
     "stream": true,
     "options": {
       "num_predict": 64,
-      "num_steps": 16,
-      "temperature": 0.2,
-      "clean_tail": true
+      "num_steps": 128,
+      "temperature": 0.2
     }
   }'
 ```
@@ -292,7 +290,7 @@ curl -N http://localhost:11434/v1/chat/completions \
     ],
     "stream": true,
     "max_tokens": 64,
-    "diffusion_steps": 16,
+    "diffusion_steps": 128,
     "temperature": 0.2
   }'
 ```

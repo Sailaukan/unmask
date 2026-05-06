@@ -21,6 +21,14 @@ class OutputCleaningTests(unittest.TestCase):
         text = "assistant:\nUseful answer\n2 2 2 2 2 2 2 2\n"
         self.assertEqual(clean_cli_output(text), "Useful answer")
 
+    def test_clean_stops_at_special_end_marker(self) -> None:
+        text = "Useful answer<|im_end|>\nassistant:\nextra tail"
+        self.assertEqual(clean_cli_output(text), "Useful answer")
+
+    def test_clean_removes_chatml_role_marker_lines(self) -> None:
+        text = "<|im_start|>assistant\nUseful answer"
+        self.assertEqual(clean_cli_output(text), "Useful answer")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,14 @@ from __future__ import annotations
 import re
 
 
+STOP_MARKERS = ("<|im_end|>", "<|endoftext|>", "</s>")
+
+
+def trim_stop_markers(text: str) -> str:
+    first_stop = min((idx for marker in STOP_MARKERS if (idx := text.find(marker)) >= 0), default=-1)
+    return text if first_stop < 0 else text[:first_stop]
+
+
 def extract_cli_output(stdout: str, stderr: str, *, clean_tail: bool = False) -> str:
     stdout_text = stdout.strip()
     if stdout_text:
@@ -57,15 +65,20 @@ def trim_inline_repetitive_tail(text: str) -> str:
     )
 
 
+def is_role_marker_line(text: str) -> bool:
+    normalized = text.strip().lower().removeprefix("<|im_start|>").strip()
+    return normalized in {"system", "system:", "user", "user:", "assistant", "assistant:"}
+
+
 def clean_cli_output(text: str) -> str:
+    text = trim_stop_markers(text)
     lines = text.replace("\r", "\n").splitlines()
     cleaned: list[str] = []
     previous_blank = False
 
     for line in lines:
         stripped = line.strip()
-        lower = stripped.lower()
-        if lower in {"user:", "assistant:"}:
+        if is_role_marker_line(stripped):
             continue
         if is_repetitive_tail_line(stripped):
             if cleaned:

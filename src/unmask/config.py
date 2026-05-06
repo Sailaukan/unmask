@@ -10,9 +10,10 @@ CLI_PATH = str(LLAMA_CPP_DIR / "build/bin/llama-diffusion-cli")
 DIFFUSION_SERVER_PATH = str(LLAMA_CPP_DIR / "build/bin/llama-diffusion-server")
 MODELS_DIR = "~/unmask/models"
 
-DEFAULT_STEPS = 128
-DEFAULT_TOKENS = 512
+DEFAULT_STEPS = 256
+DEFAULT_TOKENS = 128
 DEFAULT_TEMP = 0.2
+DEFAULT_CLEAN_TAIL = True
 
 HOST = "0.0.0.0"
 PORT = 11434

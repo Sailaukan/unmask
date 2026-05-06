@@ -12,6 +12,7 @@ import httpx
 from unmask.config import (
     CLI_PATH,
     CLI_TIMEOUT_SECONDS,
+    DEFAULT_CLEAN_TAIL,
     DEFAULT_STEPS,
     DEFAULT_TEMP,
     DEFAULT_TOKENS,
@@ -75,7 +76,7 @@ def run_diffusion_cli(
     cli_path: str = CLI_PATH,
     models_dir: str = MODELS_DIR,
     timeout: int = CLI_TIMEOUT_SECONDS,
-    clean_tail: bool = False,
+    clean_tail: bool = DEFAULT_CLEAN_TAIL,
 ) -> str:
     model_config = get_model_config(model)
     if model_config is None:
@@ -122,7 +123,7 @@ async def run_diffusion_worker(
     temperature: float = DEFAULT_TEMP,
     worker_url: str = DIFFUSION_WORKER_URL,
     models_dir: str = MODELS_DIR,
-    clean_tail: bool = False,
+    clean_tail: bool = DEFAULT_CLEAN_TAIL,
 ) -> str:
     payload = worker_payload(
         model=model,
@@ -160,7 +161,7 @@ async def stream_diffusion_worker(
     temperature: float = DEFAULT_TEMP,
     worker_url: str = DIFFUSION_WORKER_URL,
     models_dir: str = MODELS_DIR,
-    clean_tail: bool = False,
+    clean_tail: bool = DEFAULT_CLEAN_TAIL,
 ) -> AsyncIterator[dict[str, object]]:
     if not USE_PERSISTENT_WORKER:
         raise StreamingUnavailableError()
@@ -209,7 +210,7 @@ async def run_diffusion(
     n_tokens: int = DEFAULT_TOKENS,
     steps: int = DEFAULT_STEPS,
     temperature: float = DEFAULT_TEMP,
-    clean_tail: bool = False,
+    clean_tail: bool = DEFAULT_CLEAN_TAIL,
 ) -> str:
     if USE_PERSISTENT_WORKER:
         try:

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from unmask.api.parsing import generation_params, parse_bool, requested_model, should_clean_tail
 from unmask.api.prompts import coerce_text, messages_to_chatml
-from unmask.config import DEFAULT_STEPS, DEFAULT_TEMP, DEFAULT_TOKENS
+from unmask.config import DEFAULT_CLEAN_TAIL, DEFAULT_STEPS, DEFAULT_TEMP, DEFAULT_TOKENS
 
 
 class ParsingAndPromptTests(unittest.TestCase):
@@ -36,6 +36,10 @@ class ParsingAndPromptTests(unittest.TestCase):
     def test_invalid_options_raise_http_error(self) -> None:
         with self.assertRaises(HTTPException):
             should_clean_tail({"options": ["bad"]})
+
+    def test_clean_tail_defaults_to_configured_value(self) -> None:
+        self.assertEqual(should_clean_tail({}), DEFAULT_CLEAN_TAIL)
+        self.assertFalse(should_clean_tail({"clean_tail": False}))
 
     def test_requested_model_falls_back_to_active_model(self) -> None:
         self.assertEqual(requested_model({}, "dream:7b"), "dream:7b")
